@@ -284,3 +284,21 @@ define Device/zyxel_scr50axe
 		ipq-wifi-zyxel_scr50axe
 endef
 TARGET_DEVICES += zyxel_scr50axe
+
+define Device/mercusys_mr80x-v2
+	$(call Device/FitImageLzma)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := MERCUSYS
+	DEVICE_MODEL := MR80X
+	DEVICE_VARIANT := v2
+	DEVICE_DTS_CONFIG := config@mp02.1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	IMAGE_SIZE := 43008k
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-mercusys_mr80x-v2 \
+		kmod-leds-gpio
+endef
+TARGET_DEVICES += mercusys_mr80x-v2

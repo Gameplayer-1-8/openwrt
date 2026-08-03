@@ -17,6 +17,9 @@ ipq50xx_setup_interfaces()
 	glinet,gl-b3000)
 		ucidef_set_interfaces_lan_wan "lan1 lan2" "wan"
 		;;
+	mercusys,mr80x-v2)
+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
+		;;
 	cmcc,mr3000d-ci|\
 	linksys,mx2000|\
 	linksys,mx5500|\
@@ -40,9 +43,51 @@ ipq50xx_setup_interfaces()
 	esac
 }
 
+ipq50xx_setup_macs()
+{
+	local board="$1"
+
+	case $board in
+	mercusys,mr80x-v2)
+		# 0:art carries no usable MAC on this board, U-Boot itself reports
+		# "MAC Address from ART is not valid". The factory one lives in the
+		# tp_data UBIFS volume as six raw bytes, mounted read-only by
+		# preinit/09_mount_tp_data.
+		#
+		# The offsets match what the OEM firmware assigns: label and CPU port
+		# get the base address, WAN + 1, the two radios + 2 and + 3 (applied by
+		# the ath11k caldata hotplug), the unused second GMAC + 4.
+		#
+		# lan1..lan3 are set explicitly rather than left to inherit: the DSA
+		# user ports take their address from the conduit when they are created,
+		# which happens before netifd applies anything.
+		local mac
+		mac=$(get_mac_binary /tmp/tp_data/default-mac 0 2>/dev/null)
+		[ -n "$mac" ] || return
+
+		ucidef_set_label_macaddr "$mac"
+		ucidef_set_network_device_mac eth0 "$(macaddr_add "$mac" 4)"
+		ucidef_set_network_device_mac eth1 "$mac"
+		ucidef_set_network_device_mac lan1 "$mac"
+		ucidef_set_network_device_mac lan2 "$mac"
+		ucidef_set_network_device_mac lan3 "$mac"
+		ucidef_set_network_device_mac wan "$(macaddr_add "$mac" 1)"
+
+		# The bridge needs its own pair of calls. netifd creates br-lan before
+		# the port addresses are applied and would otherwise hand it a fresh
+		# random address on every boot. ucidef_set_network_device_mac is no use
+		# here: jshn keys become shell variable names, so "br-lan" is stored as
+		# "br_lan" in board.json and netifd never matches it.
+		ucidef_set_interface_macaddr "lan" "$mac"
+		ucidef_set_bridge_mac "$mac"
+		;;
+	esac
+}
+
 board_config_update
 board=$(board_name)
 ipq50xx_setup_interfaces $board
+ipq50xx_setup_macs $board
 board_config_flush
 
 exit 0

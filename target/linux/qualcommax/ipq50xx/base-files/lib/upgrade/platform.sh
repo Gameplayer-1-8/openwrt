@@ -183,7 +183,8 @@ platform_do_upgrade() {
 	cmcc,pz-l8|\
 	elecom,wrc-x3000gs2|\
 	elecom,wrc-x3000gst2|\
-	iodata,wn-dax3000gr)
+	iodata,wn-dax3000gr|\
+	mercusys,mr80x-v2)
 		local delay
 
 		delay=$(fw_printenv bootdelay)
