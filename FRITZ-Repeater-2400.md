@@ -123,93 +123,280 @@ print('%d bytes, %.2f MiB, %s'%(u,u/1048576,'OK' if u<17736196 else 'TOO BIG'))"
   bin/targets/ath79/generic/openwrt-ath79-generic-avm_fritz2400-initramfs-kernel.bin
 ```
 
-## Flashing
+## Flashing — step by step
 
-You need a PC with **192.168.178.10/24** (for EVA) and **192.168.1.10/24**
-(for OpenWrt afterwards) on the same wired interface. Put both addresses on it
-at once so nothing has to be changed halfway through.
+Read this once before you start. Every step below ends with a check, so you
+always know whether it worked before you move on.
 
-EVA only listens for a few seconds after power-on, so start the tool first and
-plug the device in afterwards.
+Nothing in steps 0–5 writes to the flash. The device is only modified in
+step 6, and even then EVA itself and the second FRITZ!OS slot stay untouched,
+so you can always go back (see [Recovery](#recovery)).
 
-### Step 1 — RAM boot, touches no flash at all
+### What you need
 
-Do this first, every time. If anything is wrong, pull the plug and FRITZ!OS
-comes back untouched.
+* the device and its power supply
+* one Ethernet cable, connected **directly** between PC and repeater — no
+  switch, no router in between
+* Python 3 on the PC
+* `eva_ramboot.py` — it ships with OpenWrt as
+  [`scripts/flashing/eva_ramboot.py`](https://github.com/openwrt/openwrt/blob/main/scripts/flashing/eva_ramboot.py)
+* an FTP client that can send raw commands (`ftp` on Windows and Linux can)
+* the two images from the release:
+  * `openwrt-ath79-generic-avm_fritz2400-initramfs-kernel-padded.bin`
+  * `openwrt-ath79-generic-avm_fritz2400-squashfs-sysupgrade.bin`
+
+Check the downloads against `sha256sums.txt` before you use them:
+
+```sh
+sha256sum -c sha256sums.txt        # Linux
+certutil -hashfile <file> SHA256   # Windows
+```
+
+### Step 0 — understand how EVA behaves
+
+EVA is AVM's boot loader. It runs an FTP server on **192.168.178.1**
+(user `adam2`, password `adam2`), but **only for a few seconds right after
+power-on**. After that it boots whatever is in flash and the FTP server is
+gone.
+
+That is why every EVA step below works the same way: **start the command
+first, then plug the device in.** The tools retry until EVA answers.
+
+If you miss the window, just unplug, start the command again, plug back in.
+
+### Step 1 — put two IP addresses on the PC
+
+You need `192.168.178.10` for EVA and `192.168.1.10` for OpenWrt afterwards.
+Put **both on the same interface at the same time**, then nothing has to be
+changed halfway through.
+
+Linux:
+
+```sh
+sudo ip addr add 192.168.178.10/24 dev eth0
+sudo ip addr add 192.168.1.10/24   dev eth0
+sudo ip link set eth0 up
+```
+
+Windows, in an **administrator** PowerShell (replace the interface name):
+
+```powershell
+New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 192.168.178.10 -PrefixLength 24
+New-NetIPAddress -InterfaceAlias "Ethernet" -IPAddress 192.168.1.10   -PrefixLength 24
+```
+
+Use `New-NetIPAddress`, not the GUI — the dialog **replaces** the address
+instead of adding a second one.
+
+**Check:**
+
+```sh
+ip -4 addr show eth0                  # Linux
+Get-NetIPAddress -InterfaceAlias "Ethernet" -AddressFamily IPv4   # Windows
+```
+
+Both addresses must be listed.
+
+> **Watch out for other interfaces.** If your Wi-Fi is on something like
+> `192.168.0.x/23`, that range covers `192.168.1.x` too and your traffic to
+> the repeater will silently go out over Wi-Fi instead of the cable. Turn
+> Wi-Fi off for the duration, or check with `ip route get 192.168.1.1` /
+> `Find-NetRoute -RemoteIPAddress 192.168.1.1`.
+
+### Step 2 — tell EVA which flash slot to boot
+
+**Do not skip this, and do it first.** The device has two 32 MiB firmware
+slots. `sysupgrade` always writes to the one at `0x02090000`, but which one
+EVA boots is decided by the variable `linux_fs_start` — and that variable
+**does not exist** on this device, so EVA boots the *other* slot at
+`0x00090000`. Skip this step and the upgrade will report success while
+FRITZ!OS cheerfully comes back, with no hint as to why.
+
+Unplug the device. Then start the FTP client:
+
+```
+ftp 192.168.178.1
+```
+
+and plug the device in. Log in as `adam2` / `adam2`, then:
+
+```
+quote SETENV linux_fs_start 1
+quote GETENV linux_fs_start
+quit
+```
+
+**Check:** the `GETENV` must answer `linux_fs_start 1`. If the login already
+fails, you missed the window — `quit`, unplug, try again.
+
+The device now boots FRITZ!OS from the other slot. That is expected and
+harmless: at this point both slots still contain FRITZ!OS.
+
+### Step 3 — boot OpenWrt from RAM
+
+This writes **nothing**. If anything goes wrong, pull the plug and FRITZ!OS
+comes back untouched. Always do this before installing anything permanently.
+
+Unplug the device. Then start:
 
 ```sh
 python3 eva_ramboot.py --offset 0x80060000 192.168.178.1 \
-    openwrt-ath79-generic-avm_fritz2400-initramfs-kernel.bin
+    openwrt-ath79-generic-avm_fritz2400-initramfs-kernel-padded.bin
 ```
 
-Two things that cost a lot of time here:
+and plug the device in. The upload takes a few seconds, then EVA unpacks the
+image and starts it.
 
-* Send `TYPE I` explicitly. Switching from `storbinary()` to `transfercmd()`
-  silently drops binary mode and the upload arrives corrupted.
-* `end - start` announced in the `STOR` command **must** equal the number of
-  bytes actually sent. `eva_ramboot.py` rounds the load address down with
-  `& ~0xfff`, so pad the image to a multiple of 4096 first — otherwise EVA
-  waits forever for the rest.
+> Use the **`-padded`** image. The load address is rounded down with
+> `& ~0xfff`, and the byte range announced in the FTP `STOR` command has to
+> match the number of bytes actually sent — otherwise EVA waits forever for
+> the rest. The padded file is a multiple of 4096, which makes the two agree.
 
-After 30–60 seconds the device answers on **192.168.1.1**, SSH included.
+**Check:** after 30–60 seconds the device answers on **192.168.1.1**:
 
-### Step 2 — tell EVA which slot to boot
-
-**Do not skip this.** `sysupgrade` always writes to `firmware` at `0x02090000`.
-Which of the two 32 MiB slots EVA boots is decided by `linux_fs_start`, and
-that variable **does not exist** on this device — so EVA boots the other slot
-at `0x00090000`. Without this step `sysupgrade` reports success and the device
-cheerfully starts FRITZ!OS again.
-
-```
-ftp> quote SETENV linux_fs_start 1
-ftp> quote GETENV linux_fs_start      # must answer 1
+```sh
+ping 192.168.1.1
+ssh root@192.168.1.1
 ```
 
-To go back to FRITZ!OS later, set it to `0`.
+There is no root password yet, so SSH lets you straight in.
 
-### Step 3 — install
+If nothing answers after two minutes: unplug, and re-read the warning about
+other interfaces in step 1 — that is the most common cause.
+
+### Step 4 — check that this build actually works on your unit
+
+You are running from RAM now, so this is the safe moment to look around.
+
+```sh
+cat /proc/mtd
+```
+
+Six partitions must be listed — `urlader`, `tffs (1)`, `reserved-kernel`,
+`caldata`, `tffs (2)`, `firmware`. If you only see one line with the raw
+flash, something is wrong; stop here.
+
+```sh
+iwinfo
+```
+
+Both radios must appear, and the MAC addresses must look like AVM's
+(`60:...`), not random ones. A random MAC means the calibration data was not
+read.
+
+```sh
+ip addr show br-lan
+```
+
+`eth0` must be up and carry the MAC from the sticker.
+
+### Step 5 — copy the image onto the device
 
 ```sh
 scp -O openwrt-ath79-generic-avm_fritz2400-squashfs-sysupgrade.bin \
-    root@192.168.1.1:/tmp/
-ssh root@192.168.1.1 "setsid sh -c 'sysupgrade -n /tmp/openwrt-*.bin' </dev/null &"
+    root@192.168.1.1:/tmp/sysupgrade.bin
 ```
 
-`-O` is required: dropbear has no SFTP server, and newer OpenSSH defaults to
-SFTP for `scp`.
+**`-O` is required.** dropbear has no SFTP server, and newer OpenSSH uses
+SFTP for `scp` by default, so without `-O` the copy just fails.
 
-`setsid` is required too. `sysupgrade` announces *"Closing all shell sessions"*
-and kills its own SSH session along with them, before it can hand over to
-`do_stage2` via ubus. You then get
+**Check:**
+
+```sh
+ssh root@192.168.1.1 "sha256sum /tmp/sysupgrade.bin; sysupgrade --test /tmp/sysupgrade.bin; echo rc=\$?"
+```
+
+The checksum must match `sha256sums.txt`, and `--test` must print `rc=0`.
+If `--test` complains about the device name, **stop** — do not force it.
+
+### Step 6 — install
+
+This is the first step that writes to flash.
+
+```sh
+ssh root@192.168.1.1 "setsid sh -c 'sysupgrade -n /tmp/sysupgrade.bin' </dev/null &"
+```
+
+**`setsid` is required.** `sysupgrade` announces *"Closing all shell
+sessions"* and kills its own SSH session along with them, before it can hand
+over to `do_stage2` via ubus. Without `setsid` you get
 
 ```
 Command failed: ubus call system sysupgrade { ... } (Connection failed)
 ```
 
-which is misleading — on the first attempt it had already written the flash.
-Never trust that message; look at the target slot instead:
+That message is misleading — on my first attempt the flash had already been
+written anyway. Never judge by that message; look at the slot instead:
 
 ```sh
-dd if=/dev/mtd5 bs=1 count=16 2>/dev/null | hexdump -C
-# 81 12 ed fe 37 cf 24 00   stock FRITZ!OS
-# 81 12 ed fe e4 44 2a 00   this OpenWrt image (reclength 0x002a44e4)
+ssh root@192.168.1.1 "dd if=/dev/mtd5 bs=1 count=16 2>/dev/null | hexdump -C"
+# 81 12 ed fe 37 cf 24 00 ...   still stock FRITZ!OS
+# 81 12 ed fe e4 44 2a 00 ...   this OpenWrt image
 ```
 
-### After the first boot
+The SSH connection will drop while it writes. That is normal. Do **not** pull
+the power now — writing 7 MB takes a moment, and the device reboots on its
+own afterwards.
 
-`mtdsplit_eva` now splits the image and you get `kernel`, `rootfs` and a
-24.5 MB `rootfs_data` overlay. On the **first** boot the overlay is still a
-tmpfs (`jffs2 not ready yet, using temporary tmpfs overlay`) — settings only
-survive from the second reboot onwards.
+**Check:** after one to two minutes it answers on 192.168.1.1 again.
 
-## Recovery
+### Step 7 — confirm it is running from flash
 
-Nothing here ever touches EVA itself, and `reserved-kernel` at `0x00090000`
-keeps an untouched copy of stock FRITZ!OS. To go back:
+```sh
+ssh root@192.168.1.1 "mount | grep -E ' / |/overlay'; cat /proc/mtd"
+```
 
-1. `quote SETENV linux_fs_start 0` over EVA's FTP, then power-cycle, or
-2. flash AVM's recovery image (`FRITZ.Repeater_2400-08.20.image`) the usual way
+You want to see `/dev/root ... squashfs` and an overlay — that means it
+booted from flash, not from RAM. And `/proc/mtd` now has three more entries:
+`kernel`, `rootfs` and `rootfs_data`.
+
+If instead FRITZ!OS comes up: `linux_fs_start` did not get set. Go back to
+step 2 — the flash content is fine, EVA is just booting the wrong slot.
+
+### Step 8 — reboot once more
+
+```sh
+ssh root@192.168.1.1 "reboot"
+```
+
+On the **first** boot after installing, the overlay is still a tmpfs while
+jffs2 is being created (`jffs2 not ready yet, using temporary tmpfs overlay`).
+Settings only survive from the **second** boot onwards. Reboot once now, so
+you do not lose your first configuration.
+
+**Check:**
+
+```sh
+ssh root@192.168.1.1 "mount | grep overlay"
+# /dev/mtdblock8 on /overlay type jffs2 (rw,noatime)
+```
+
+`jffs2` instead of `tmpfs` means you are done.
+
+### Step 9 — set a root password
+
+The device has none, and both SSH and LuCI are open to anyone on the network.
+
+```sh
+ssh root@192.168.1.1 "passwd"
+```
+
+LuCI is at **http://192.168.1.1/**.
+
+### If you want to go back to FRITZ!OS
+
+Nothing here ever touched EVA, and the slot at `0x00090000` still holds an
+untouched copy of stock FRITZ!OS. Unplug, start `ftp 192.168.178.1`, plug in,
+log in as `adam2`/`adam2`, then:
+
+```
+quote SETENV linux_fs_start 0
+quit
+```
+
+Power-cycle and FRITZ!OS is back. If you would rather start completely fresh,
+flash AVM's recovery image (`FRITZ.Repeater_2400-08.20.image`) the usual way —
+that rewrites both slots.
 
 ## What the patches do
 
