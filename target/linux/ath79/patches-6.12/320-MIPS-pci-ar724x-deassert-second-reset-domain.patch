@@ -1,0 +1,70 @@
+From: OpenWrt FRITZ!Repeater 2400 port
+Subject: MIPS: pci-ar724x: release the second reset domain if the DT has one
+
+The root complex at 0x18250000/0x18280000/0x16000000 is the one qca955x.dtsi
+describes as "pcie1" and gates on RST_RESET2 (0x180600c0) bits 6 and 7,
+while qca956x.dtsi gates the identical register triple on RST_RESET
+(0x1806001c).  Under an AVM EVA boot loader bits 6 and 7 are set in both
+words (0x1806001c reads 0x020288ff, 0x180600c0 reads 0x000308f1), and the
+CRP window at 0x18250000 faults on every access until the RST_RESET2 pair is
+cleared as well - measured on a FRITZ!Repeater 2400, where clearing only the
+RST_RESET pair left it unreadable and clearing RST_RESET2 too made it return
+0xa02a168c.
+
+Rather than moving "hc"/"phy" over - which would change which bit gates the
+init sequence in probe(), and would make U-Boot based boards suddenly run
+it - pick up an optional second pair and deassert that as well.  Boards that
+do not describe "hc2"/"phy2" get NULL reset controls, and
+reset_control_deassert(NULL) is a no-op, so nothing changes for them.
+
+Also let the core and its PHY settle before the first ctrl_base access.
+
+--- a/arch/mips/pci/pci-ar724x.c
++++ b/arch/mips/pci/pci-ar724x.c
+@@ -69,6 +69,8 @@
+ 
+ 	struct reset_control *hc_reset;
+ 	struct reset_control *phy_reset;
++	struct reset_control *hc2_reset;
++	struct reset_control *phy2_reset;
+ };
+ 
+ static struct irq_chip ar724x_pci_irq_chip;
+@@ -357,6 +359,20 @@
+ 	reset_control_deassert(apc->hc_reset);
+ 	reset_control_deassert(apc->phy_reset);
+ 
++	/*
++	 * QCA956x/QCN550x route this root complex through a second reset
++	 * word (RST_RESET2, 0x180600c0) as well.  An AVM EVA boot loader
++	 * leaves bits 6 and 7 set there too, and the CRP window at
++	 * 0x18250000 stays unreadable until they are cleared.  Both are
++	 * optional resets, so this is a no-op wherever the device tree
++	 * does not describe them.
++	 */
++	reset_control_deassert(apc->hc2_reset);
++	reset_control_deassert(apc->phy2_reset);
++
++	/* let the core and its PHY leave reset before touching ctrl_base */
++	mdelay(10);
++
+ 	if (of_device_is_compatible(apc->np, "qcom,qca9550-pci")) {
+ 		/* remove the reset of the PCIE PLL */
+ 		ppl = ath79_pll_rr(QCA955X_PLL_PCIE_CONFIG_REG);
+@@ -481,6 +497,16 @@
+ 	if (IS_ERR(apc->phy_reset))
+ 		return PTR_ERR(apc->phy_reset);
+ 
++	apc->hc2_reset = devm_reset_control_get_optional_exclusive(&pdev->dev,
++								   "hc2");
++	if (IS_ERR(apc->hc2_reset))
++		return PTR_ERR(apc->hc2_reset);
++
++	apc->phy2_reset = devm_reset_control_get_optional_exclusive(&pdev->dev,
++								    "phy2");
++	if (IS_ERR(apc->phy2_reset))
++		return PTR_ERR(apc->phy2_reset);
++
+ 	apc->np = pdev->dev.of_node;
+ 	apc->pci_controller.pci_ops = &ar724x_pci_ops;
+ 	apc->pci_controller.io_resource = &apc->io_res;

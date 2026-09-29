@@ -158,7 +158,16 @@
 		};
 
 		pcie: pcie@18250000 {
-			compatible = "qcom,ar7240-pci";
+			/*
+			 * "qcom,qca9560-pci" first: it selects the QCA956x branch in
+			 * pci-ar724x, which programs the PCIe PLL at PLL + 0x14.
+			 * Without it the driver takes the AR724x path and writes
+			 * PLL + 0x10, the CPU/DDR/AHB clock control on this SoC.
+			 * "qcom,ar7240-pci" MUST stay in the list:
+			 * patches-6.12/810-ath79-ignore-the-abused-interrupt-map-on-pcie-node.patch
+			 * matches on exactly that string.
+			 */
+			compatible = "qcom,qca9560-pci", "qcom,ar7240-pci";
 			#address-cells = <3>;
 			#size-cells = <2>;
 			bus-range = <0x0 0x0>;
@@ -173,8 +182,18 @@
 
 			device_type = "pci";
 
-			resets = <&rst 6>, <&rst 7>;
-			reset-names = "hc", "phy";
+			/*
+			 * This is root complex 1: qca955x.dtsi gates the very same
+			 * register triple (0x18250000/0x18280000/0x16000000) on
+			 * <&rst2 6>/<&rst2 7>.  Under an AVM EVA boot loader bits 6
+			 * and 7 are set in BOTH reset words, and the CRP window stays
+			 * unreadable until the rst2 pair is cleared too.  Keep
+			 * "hc"/"phy" on rst - that is the bit probe() gates the init
+			 * sequence on, so U-Boot based boards keep their behaviour -
+			 * and release the rst2 pair in addition, as optional resets.
+			 */
+			resets = <&rst 6>, <&rst 7>, <&rst2 6>, <&rst2 7>;
+			reset-names = "hc", "phy", "hc2", "phy2";
 
 			interrupt-controller;
 			#interrupt-cells = <1>;

@@ -1,0 +1,48 @@
+From: OpenWrt FRITZ!Repeater 2400 port
+Subject: ag71xx: time out instead of hanging on SGMII SerDes lock
+
+ag71xx_sgmii_serdes_init_qca956x() waits for the SerDes lock detect bit in
+an unbounded busy loop. On a board where the SGMII SerDes never locks this
+hangs the driver probe, and with it the whole boot - the machine comes up
+far enough to light the LEDs from the device tree defaults and then stops,
+with no console output and no hint of what happened.
+
+Give the loop a 100 ms budget and warn instead. A board with a dead SGMII
+link then still boots; the interface simply stays down.
+
+--- a/drivers/net/ethernet/atheros/ag71xx/ag71xx_main.c
++++ b/drivers/net/ethernet/atheros/ag71xx/ag71xx_main.c
+@@ -15,6 +15,7 @@
+ #include <linux/of_net.h>
+ #include <linux/of_address.h>
+ #include <linux/of_platform.h>
++#include <linux/delay.h>
+ #include "ag71xx.h"
+ 
+ #define AG71XX_DEFAULT_MSG_ENABLE	\
+@@ -583,6 +584,7 @@
+ 	void __iomem *gmac_base;
+ 	u32 serdes_cal;
+ 	u32 t;
++	int i;
+ 
+ 	np = of_get_child_by_name(np, "gmac-config");
+ 	if (!np)
+@@ -642,9 +644,14 @@
+ 	ath79_device_reset_clear(QCA956X_RESET_SGMII_ANALOG);
+ 	ath79_device_reset_clear(QCA956X_RESET_SGMII);
+ 
+-	while (!(__raw_readl(gmac_base + QCA956X_GMAC_REG_SGMII_SERDES)
+-			& QCA956X_SGMII_SERDES_LOCK_DETECT_STATUS))
+-		;
++	for (i = 0; i < 1000; i++) {
++		if (__raw_readl(gmac_base + QCA956X_GMAC_REG_SGMII_SERDES)
++				& QCA956X_SGMII_SERDES_LOCK_DETECT_STATUS)
++			break;
++		udelay(100);
++	}
++	if (i == 1000)
++		pr_warn("%pOF: SGMII SerDes lock timeout\n", np_dev);
+ 
+ 	iounmap(gmac_base);
+ err_iomap:

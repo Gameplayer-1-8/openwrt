@@ -1,0 +1,80 @@
+From: OpenWrt FRITZ!Repeater 2400 port
+Subject: MIPS: pci-ar724x: pulse PERST# after the PCIe PLL is up
+
+Boards that drive the endpoint's PERST# line from a GPIO have so far done
+it with a gpio-hog in their device tree.  That releases the endpoint during
+gpiolib initialisation, several seconds before ar724x_pci_hw_init() runs and
+brings up the PCIe PLL - so the endpoint sees its reset deasserted while it
+has no reference clock at all.  PCIe requires PERST# to be deasserted after
+the reference clock is stable, and a QCA9984 does not recover on its own:
+the link simply never trains.
+
+Measured on a FRITZ!Repeater 2400.  With the PLL programmed and both reset
+domains released, the root complex is fully up - its own config space at
+0x18250000 reads 0xa02a168c - and RST_RESET still reports LINK_UP = 0.
+Asserting PERST# for 100 ms at that point and deasserting it again brings
+LINK_UP to 1 immediately, and the endpoint config space at 0x16000000 then
+reads 0x0046168c: vendor 0x168c, device 0x0046.
+
+Take an optional "reset" GPIO and pulse it in hw_init(), after the PLL and
+before EP_RST_L and LTSSM_ENABLE.  Boards without reset-gpios get NULL from
+devm_gpiod_get_optional() and are unaffected.
+
+--- a/arch/mips/pci/pci-ar724x.c
++++ b/arch/mips/pci/pci-ar724x.c
+@@ -12,6 +12,7 @@
+ #include <linux/init.h>
+ #include <linux/delay.h>
+ #include <linux/platform_device.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/irqchip/chained_irq.h>
+ #include <asm/mach-ath79/ath79.h>
+ #include <asm/mach-ath79/ar71xx_regs.h>
+@@ -72,6 +73,8 @@
+ 	struct reset_control *phy_reset;
+ 	struct reset_control *hc2_reset;
+ 	struct reset_control *phy2_reset;
++
++	struct gpio_desc *reset_gpio;
+ };
+ 
+ static struct irq_chip ar724x_pci_irq_chip;
+@@ -410,6 +413,21 @@
+ 		ath79_pll_wr(AR724X_PLL_REG_PCIE_CONFIG, ppl);
+ 	}
+ 
++	/*
++	 * Only now, with the reference clock running, is it legal to
++	 * release the endpoint.  A gpio-hog would have done it during
++	 * gpiolib init, seconds too early, and a QCA9984 never trains
++	 * its link after that.
++	 */
++	if (apc->reset_gpio) {
++		/* assert PERST# */
++		gpiod_set_value_cansleep(apc->reset_gpio, 1);
++		msleep(100);
++		/* deassert, then let the endpoint come up */
++		gpiod_set_value_cansleep(apc->reset_gpio, 0);
++		msleep(100);
++	}
++
+ 	/* deassert the reset state of the PCIE endpoint */
+ 	rst = __raw_readl(apc->ctrl_base + AR724X_PCI_REG_RESET);
+ 	rst |= AR724X_PCI_RESET_EP_RESET_L;
+@@ -500,6 +517,16 @@
+ 	if (IS_ERR(apc->phy2_reset))
+ 		return PTR_ERR(apc->phy2_reset);
+ 
++	/*
++	 * PERST# towards the endpoint.  Requested asserted so the
++	 * endpoint stays in reset until hw_init() has the reference
++	 * clock running.
++	 */
++	apc->reset_gpio = devm_gpiod_get_optional(&pdev->dev, "reset",
++					  GPIOD_OUT_HIGH);
++	if (IS_ERR(apc->reset_gpio))
++		return PTR_ERR(apc->reset_gpio);
++
+ 	apc->np = pdev->dev.of_node;
+ 	apc->pci_controller.pci_ops = &ar724x_pci_ops;
+ 	apc->pci_controller.io_resource = &apc->io_res;

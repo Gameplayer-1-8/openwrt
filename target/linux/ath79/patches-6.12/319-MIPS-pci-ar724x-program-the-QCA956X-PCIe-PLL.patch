@@ -1,0 +1,85 @@
+From: OpenWrt FRITZ!Repeater 2400 port
+Subject: MIPS: pci-ar724x: program the QCA956x PCIe PLL
+
+ar724x_pci_hw_init() falls through to the AR724x code path on QCA956x and
+writes AR724X_PLL_REG_PCIE_CONFIG (PLL + 0x10).  On this SoC that offset is
+the CPU/DDR/AHB clock control register: clearing what the driver believes to
+be the PLL bypass bit reprograms the clock tree underneath the running CPU
+and hangs the machine instantly, with no console output and no exception.
+
+The QCA956x PCIe PLL configuration register is at PLL + 0x14, with the same
+bit layout QCA's own boot loader uses (qca_pcie_pll_init):
+
+  BIT(16) bypass, BIT(30) power down, BIT(31) updating
+
+On a FRITZ!Repeater 2400 the AVM EVA boot loader leaves that register at
+0x40010400 - power down and bypass both set, refdiv 1 - which is exactly
+the state after the first step of qca_pcie_pll_init().  EVA stops there,
+so the PCIe block never gets a clock and link training cannot start.
+
+Devices supported so far ship a U-Boot that both releases the host
+controller reset and finishes the PLL setup, so ar724x_pci_hw_init() is
+never reached on them and neither problem was visible.
+
+Power the PLL up, wait for the update to settle, then drop the bypass.
+
+--- a/arch/mips/pci/pci-ar724x.c
++++ b/arch/mips/pci/pci-ar724x.c
+@@ -30,6 +30,16 @@
+ #define AR724X_PCI_INT_DEV0		BIT(14)
+ 
+ #define AR724X_PCI_IRQ_COUNT		1
++
++/*
++ * QCA956x PCIe PLL.  Not in ar71xx_regs.h: the register only shows up in
++ * QCA's boot loader sources (qca_soc_common.h), and its offset differs from
++ * both AR724x (0x10) and QCA955x (0x0c).
++ */
++#define QCA956X_PLL_PCIE_CONFIG_REG		0x14
++#define QCA956X_PLL_PCIE_CONFIG_PLL_BYPASS	BIT(16)
++#define QCA956X_PLL_PCIE_CONFIG_PLL_PWD		BIT(30)
++#define QCA956X_PLL_PCIE_CONFIG_UPDATING	BIT(31)
+ 
+ #define AR7240_BAR0_WAR_VALUE	0xffff
+ 
+@@ -358,6 +367,32 @@
+ 		ppl = ath79_pll_rr(QCA955X_PLL_PCIE_CONFIG_REG);
+ 		ppl &= ~QCA955X_PLL_PCIE_CONFIG_PLL_BYPASS;
+ 		ath79_pll_wr(QCA955X_PLL_PCIE_CONFIG_REG, ppl);
++	} else if (of_device_is_compatible(apc->np, "qcom,qca9560-pci")) {
++		int updating = 0;
++
++		/*
++		 * Do NOT touch PLL + 0x10 here - that is the CPU/DDR/AHB
++		 * clock control on this SoC, not a PCIe register.
++		 */
++
++		/* power up the PCIe PLL */
++		ppl = ath79_pll_rr(QCA956X_PLL_PCIE_CONFIG_REG);
++		ppl &= ~QCA956X_PLL_PCIE_CONFIG_PLL_PWD;
++		ath79_pll_wr(QCA956X_PLL_PCIE_CONFIG_REG, ppl);
++
++		/* wait up to 100ms for the PLL update to settle */
++		do {
++			mdelay(10);
++			updating++;
++			ppl = ath79_pll_rr(QCA956X_PLL_PCIE_CONFIG_REG);
++		} while (updating < 10 &&
++			 (ppl & QCA956X_PLL_PCIE_CONFIG_UPDATING));
++
++		/* deassert bypass for the PCIe PLL */
++		ppl = ath79_pll_rr(QCA956X_PLL_PCIE_CONFIG_REG);
++		ppl &= ~QCA956X_PLL_PCIE_CONFIG_PLL_BYPASS;
++		ath79_pll_wr(QCA956X_PLL_PCIE_CONFIG_REG, ppl);
++		mdelay(10);
+ 	} else {
+ 		/* remove the reset of the PCIE PLL */
+ 		ppl = ath79_pll_rr(AR724X_PLL_REG_PCIE_CONFIG);
+@@ -455,6 +490,7 @@
+ static const struct of_device_id ar724x_pci_ids[] = {
+ 	{ .compatible = "qcom,ar7240-pci" },
+ 	{ .compatible = "qcom,qca9550-pci" },
++	{ .compatible = "qcom,qca9560-pci" },
+ 	{},
+ };
+ 
