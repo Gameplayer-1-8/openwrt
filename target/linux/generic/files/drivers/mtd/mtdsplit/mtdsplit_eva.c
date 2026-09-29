@@ -46,8 +46,21 @@ static int mtdsplit_parse_eva(struct mtd_info *master,
 	if (retlen != sizeof(hdr))
 		return -EIO;
 
+	/*
+	 * Signal "no EVA image in this partition" as -ENOENT, never
+	 * -EINVAL: add_mtd_partitions() treats every error but -ENOENT as
+	 * fatal and deletes the complete partition table of the parent
+	 * device, so a firmware slot that still holds stock FRITZ!OS - or
+	 * that is erased - takes all of /proc/mtd down with it.
+	 *
+	 * Stock FRITZ!OS does carry a valid EVA header; it fails the
+	 * rootfs check below because its squashfs does not sit at
+	 * round_up(kernel_size, 0x10000) + 0x100.  That offset is an
+	 * OpenWrt build convention (eva-image | pad-to 64k |
+	 * append-squashfs-fakeroot-be | pad-to 256), not an AVM one.
+	 */
 	if (le32_to_cpu(hdr.magic) != EVA_MAGIC)
-		return -EINVAL;
+		return -ENOENT;
 
 	kernel_size = le32_to_cpu(hdr.size) + EVA_FOOTER_SIZE;
 
@@ -58,11 +71,11 @@ static int mtdsplit_parse_eva(struct mtd_info *master,
 	rootfs_offset += EVA_DUMMY_SQUASHFS_SIZE;
 
 	if (rootfs_offset >= master->size)
-		return -EINVAL;
+		return -ENOENT;
 
 	err = mtd_check_rootfs_magic(master, rootfs_offset, NULL);
 	if (err)
-		return err;
+		return err == -EINVAL ? -ENOENT : err;
 
 	parts = kzalloc(EVA_NR_PARTS * sizeof(*parts), GFP_KERNEL);
 	if (!parts)
