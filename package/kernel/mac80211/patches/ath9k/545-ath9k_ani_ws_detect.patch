@@ -119,37 +119,37 @@
 -		m2ThreshExt = on ?
 -			aniState->iniDef.m2ThreshExt : m2ThreshExt_off;
 -
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW(ah),
 -			      AR_PHY_SFCORR_LOW_M1_THRESH_LOW,
 -			      m1ThreshLow);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW(ah),
 -			      AR_PHY_SFCORR_LOW_M2_THRESH_LOW,
 -			      m2ThreshLow);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR(ah),
 -			      AR_PHY_SFCORR_M1_THRESH,
 -			      m1Thresh);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR(ah),
 -			      AR_PHY_SFCORR_M2_THRESH,
 -			      m2Thresh);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR(ah),
 -			      AR_PHY_SFCORR_M2COUNT_THR,
 -			      m2CountThr);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_LOW(ah),
 -			      AR_PHY_SFCORR_LOW_M2COUNT_THR_LOW,
 -			      m2CountThrLow);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT(ah),
 -			      AR_PHY_SFCORR_EXT_M1_THRESH_LOW,
 -			      m1ThreshLowExt);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT(ah),
 -			      AR_PHY_SFCORR_EXT_M2_THRESH_LOW,
 -			      m2ThreshLowExt);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT(ah),
 -			      AR_PHY_SFCORR_EXT_M1_THRESH,
 -			      m1ThreshExt);
--		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT,
+-		REG_RMW_FIELD(ah, AR_PHY_SFCORR_EXT(ah),
 -			      AR_PHY_SFCORR_EXT_M2_THRESH,
 -			      m2ThreshExt);
 -skip_ws_det:
  		if (on)
- 			REG_SET_BIT(ah, AR_PHY_SFCORR_LOW,
+ 			REG_SET_BIT(ah, AR_PHY_SFCORR_LOW(ah),
  				    AR_PHY_SFCORR_LOW_USE_SELF_CORR_LOW);

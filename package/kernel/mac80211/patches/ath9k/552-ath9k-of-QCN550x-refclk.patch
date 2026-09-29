@@ -1,0 +1,26 @@
+From: OpenWrt FRITZ!Repeater 2400 port
+Subject: wifi: ath9k: apply the QCA956x SoC quirks to QCN550x too
+
+ath9k_of_init() picks the SoC specific setup by device ID.  QCN550x, added
+by 005-wifi-ath9k-add-QCN550x-device-IDs.patch, appears in none of the
+branches, so a node using compatible = "qca,qcn5502-wifi" silently loses
+both get_mac_revision and is_clk_25mhz: is_clk_25mhz stays false, which
+selects the wrong initval tables (ar9003_hw.c) and is evaluated again in
+ar9003_phy.c and ar9003_eeprom.c.
+
+QCN550x is a QCA956x derivative and uses the same bootstrap register
+(QCA956X_RESET_REG_BOOTSTRAP, bit 2 = REF_CLK_40), so fold it into that
+branch.
+
+--- a/drivers/net/wireless/ath/ath9k/init.c
++++ b/drivers/net/wireless/ath/ath9k/init.c
+@@ -744,7 +744,8 @@
+ 		u32 t = ath79_reset_rr(QCA955X_RESET_REG_BOOTSTRAP);
+ 		ah->is_clk_25mhz = !(t & QCA955X_BOOTSTRAP_REF_CLK_40);
+ 		ah->external_reset = qca955x_wmac_reset;
+-	} else if (ah->hw_version.devid == AR9300_DEVID_QCA956X) {
++	} else if (ah->hw_version.devid == AR9300_DEVID_QCA956X ||
++		   ah->hw_version.devid == AR9300_DEVID_QCN550X) {
+ 		ah->get_mac_revision = ath79_get_soc_revision;
+ 		u32 t = ath79_reset_rr(QCA956X_RESET_REG_BOOTSTRAP);
+ 		ah->is_clk_25mhz = !(t & QCA956X_BOOTSTRAP_REF_CLK_40);
