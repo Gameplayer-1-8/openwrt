@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+#include "qcn5502_avm_fritz2400.dtsi"
+
+
+/*
+ * 5 GHz: QCA9984 4x4 802.11ac Wave 2 hinter dem PCIe-Root-Complex.
+ *
+ * Das "qcom,qca9560-pci"-compatible steht jetzt in qca956x.dtsi am
+ * pcie-Knoten selbst, damit der QCA956x-Zweig fuer ALLE Boards dieser
+ * Familie gilt und nicht nur fuer dieses hier.
+ *
+ * Die Pre-Cal fuer den QCA9984 erzeugt hotplug.d/firmware/11-ath10k-caldata
+ * aus urlader-Cal-Entry 0x0208 (12064 Byte, md5
+ * d57cbcc0b2f8d6151f4d7ee3062abee9). Die caldata-Partition ist auf
+ * diesem Geraet vollstaendig geloescht und taugt nicht als Fallback.
+ */
+&pcie {
+	status = "okay";
+
+	/*
+	 * PERST# zum QCA9984, OEM-Devicetree: gpio_avm_pcie_reset = 5.
+	 *
+	 * Bewusst KEIN gpio-hog: der wuerde die Leitung schon bei der
+	 * gpiolib-Initialisierung freigeben, rund sieben Sekunden bevor
+	 * ar724x_pci_hw_init() die PCIe-PLL einschaltet. Der Endpoint
+	 * saehe seinen Reset aufgehoben, ohne Referenztakt zu haben, und
+	 * trainiert danach nie mehr - live gemessen: LINK_UP blieb 0,
+	 * obwohl der Root Complex komplett stand (CRP = a02a168c).
+	 * Ein PERST#-Impuls an derselben Stelle brachte LINK_UP sofort
+	 * auf 1 und 0x16000000 auf 0046168c.
+	 *
+	 * Patch 322 taktet die Leitung im Treiber an der richtigen
+	 * Stelle. GPIO_ACTIVE_LOW, weil PERST# aktiv low ist.
+	 */
+	reset-gpios = <&gpio 5 GPIO_ACTIVE_LOW>;
+
+	wifi@0,0 {
+		compatible = "qcom,ath10k";
+		reg = <0 0 0 0 0>;
+	};
+};

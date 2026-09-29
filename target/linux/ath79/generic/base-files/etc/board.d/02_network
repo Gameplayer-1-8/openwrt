@@ -24,6 +24,7 @@ ath79_setup_interfaces()
 	asus,rp-ac51|\
 	asus,rp-ac66|\
 	avm,fritz1750e|\
+	avm,fritz2400|\
 	avm,fritz300e|\
 	avm,fritzdvbc|\
 	comfast,cf-wr752ac-v1|\
@@ -657,6 +658,7 @@ ath79_setup_macs()
 	avm,fritzdvbc)
 		label_mac=$(fritz_tffs -n macwlan -i $(find_mtd_part "tffs (1)"))
 		;;
+	avm,fritz2400|\
 	avm,fritz300e)
 		lan_mac=$(fritz_tffs -n maca -i $(find_mtd_part "tffs (1)"))
 		label_mac=$(fritz_tffs -n macwlan -i $(find_mtd_part "tffs (1)"))

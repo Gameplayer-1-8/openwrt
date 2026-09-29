@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/*
+ * Fallback variant with the PCIe root complex left disabled.
+ *
+ * This is the configuration that is known to boot on this device.  It has
+ * 2.4 GHz works here - the QCN5502 WMAC sits in the SoC and needs no PCIe -
+ * but there is no 5 GHz, because the QCA9984 hangs off the disabled bus.
+ * Use it if the regular image does not come up.
+ */
+
+#include "qcn5502_avm_fritz2400.dtsi"
+
+&pcie {
+	status = "disabled";
+};

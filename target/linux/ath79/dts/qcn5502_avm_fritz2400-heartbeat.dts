@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/*
+ * Lebenszeichen-Test ohne serielle Konsole und ohne Netzwerk.
+ *
+ * Alles abgeschaltet ausser den LEDs. Die Power-LED bekommt den
+ * heartbeat-Trigger. spi-gpio, GPIO_74X164 (74HC595) und der
+ * heartbeat-Trigger sind im ath79-Kernel fest eingebaut - es braucht
+ * dafuer also weder Userspace noch ein Modul, nur einen laufenden
+ * Scheduler.
+ *
+ * BLINKT die Power-LED im Herzschlag-Rhythmus (zwei kurze Schlaege,
+ * Pause), dann laeuft Linux. Der Fehler sitzt dann im Devicetree oder in
+ * einem Treiber, nicht bei EVA und nicht an der Image-Groesse.
+ *
+ * BLEIBT sie dunkel oder statisch, stirbt es vor oder ganz am Anfang von
+ * Linux - dann ist EVA bzw. die Groesse des entpackten Images der
+ * Verdaechtige.
+ */
+
+#include "qcn5502_avm_fritz2400.dtsi"
+
+&pcie {
+	status = "disabled";
+};
+
+&eth0 {
+	status = "disabled";
+};
+
+&mdio0 {
+	status = "disabled";
+};
+
+&led_power {
+	linux,default-trigger = "heartbeat";
+};

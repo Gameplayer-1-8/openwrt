@@ -1,0 +1,317 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+#include "qca956x.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "AVM FRITZ!Repeater 2400";
+	compatible = "avm,fritz2400", "qca,qcn5500", "qca,qca9560";
+
+	aliases {
+		led-boot = &led_power;
+		led-failsafe = &led_power;
+		led-running = &led_power;
+		led-upgrade = &led_power;
+		label-mac-device = &eth0;
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		connect {
+			label = "connect";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&gpio 1 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+
+	/*
+	 * 74HC595 shift register driving all front LEDs.
+	 * Pinout taken from the OEM device tree (avm-gpio node):
+	 *   gpio_avm_shift_clk  = 2  -> SRCLK
+	 *   gpio_avm_shift_din  = 3  -> SER
+	 *   gpio_avm_shift_rclk = 0  -> RCLK (latch, used as SPI chip select)
+	 *   shift_register_size = 8
+	 */
+	led_spi {
+		compatible = "spi-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sck-gpios = <&gpio 2 GPIO_ACTIVE_HIGH>;
+		mosi-gpios = <&gpio 3 GPIO_ACTIVE_HIGH>;
+		cs-gpios = <&gpio 0 GPIO_ACTIVE_LOW>;
+		num-chipselects = <1>;
+
+		led_gpio: led_gpio@0 {
+			compatible = "fairchild,74hc595";
+			reg = <0>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			registers-number = <1>;
+			spi-max-frequency = <10000000>;
+		};
+	};
+
+	/*
+	 * Shift register bit map, from the OEM avm-gpio node
+	 * (AVM numbers shift register pins as 100 + bit):
+	 *   0x64..0x68 = led_fsi0..4 -> RSSI bar
+	 *   0x69       = power
+	 *   0x6a       = wlan
+	 *   0x6b       = lan
+	 */
+	leds {
+		compatible = "gpio-leds";
+
+		rssi0 {
+			label = "green:rssi0";
+			gpios = <&led_gpio 0 GPIO_ACTIVE_HIGH>;
+		};
+
+		rssi1 {
+			label = "green:rssi1";
+			gpios = <&led_gpio 1 GPIO_ACTIVE_HIGH>;
+		};
+
+		rssi2 {
+			label = "green:rssi2";
+			gpios = <&led_gpio 2 GPIO_ACTIVE_HIGH>;
+		};
+
+		rssi3 {
+			label = "green:rssi3";
+			gpios = <&led_gpio 3 GPIO_ACTIVE_HIGH>;
+		};
+
+		rssi4 {
+			label = "green:rssi4";
+			gpios = <&led_gpio 4 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_power: power {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&led_gpio 5 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+
+		wlan {
+			function = LED_FUNCTION_WLAN;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&led_gpio 6 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "phy0tpt";
+		};
+
+		lan {
+			function = LED_FUNCTION_LAN;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&led_gpio 7 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	/* LM75 temperature sensor, bit-banged I2C (OEM: SDA = 16, SCL = 17) */
+	i2c {
+		compatible = "i2c-gpio";
+		sda-gpios = <&gpio 16 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		scl-gpios = <&gpio 17 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+		i2c-gpio,delay-us = <5>;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		thermal@48 {
+			compatible = "national,lm75";
+			reg = <0x48>;
+			#thermal-sensor-cells = <0>;
+		};
+	};
+};
+
+&uart {
+	status = "okay";
+};
+
+&spi {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+
+		/*
+		 * 64 MiB SPI-NOR: Winbond W25Q512JV.  JEDEC 0xEF4020 per EVA TFFS
+		 * entry 0x01cb "spinor=0xEF4020,cpu=0x2170" (0xEF is Winbond; the
+		 * MX25L51245G named here before would be 0xC2...).  cpu=0x2170
+		 * matches the live read of 0x18060090 = 0x00002170.
+		 *
+		 * The boundaries are not from the OEM boot log but from EVA's own
+		 * environment variables mtd0..mtd6 (TFFS ids 0x01b0..0x01b6,
+		 * identical in both TFFS copies):
+		 *
+		 *   0x00000000-0x00020000 urlader         EVA mtd2  bootloader
+		 *   0x00020000-0x00090000 tffs (1)        EVA mtd3  config + MACs
+		 *   0x00090000-0x02000000 reserved-kernel EVA mtd1  FRITZ!OS slot
+		 *   0x02000000-0x02020000 caldata         EVA mtd6  128 KiB, ERASED
+		 *   0x02020000-0x02090000 tffs (2)        EVA mtd4  config backup
+		 *   0x02090000-0x04000000 firmware        EVA mtd5  FRITZ!OS slot
+		 *
+		 * Which of the two 32 MiB slots EVA boots is NOT derivable here:
+		 * both carry the same valid EVA image (magic 0xfeed1281, size
+		 * 0x24cf37), and EVA's slot selector linux_fs_start (TFFS name
+		 * table id 0x0198) has no entry in either TFFS copy.
+		 *
+		 * "caldata" is fully erased on this unit (131072 of 131072 bytes
+		 * are 0xFF) - the calibration data lives zlib-compressed in
+		 * "urlader" instead, entry 0x0207 for the 2.4 GHz WMAC and 0x0208
+		 * for the QCA9984.  Do not add a caldata fallback here.
+		 *
+		 * OpenWrt only ever touches the last region.  The whole second
+		 * FRITZ!OS slot and both TFFS copies stay intact, so EVA can
+		 * always restore the stock firmware.
+		 */
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "urlader";
+				reg = <0x000000 0x020000>;
+				read-only;
+			};
+
+			partition@20000 {
+				label = "tffs (1)";
+				reg = <0x020000 0x070000>;
+				read-only;
+			};
+
+			partition@90000 {
+				label = "reserved-kernel";
+				reg = <0x090000 0x1f70000>;
+				read-only;
+			};
+
+			partition@2000000 {
+				label = "caldata";
+				reg = <0x2000000 0x020000>;
+				read-only;
+			};
+
+			partition@2020000 {
+				label = "tffs (2)";
+				reg = <0x2020000 0x070000>;
+				read-only;
+			};
+
+			partition@2090000 {
+				compatible = "avm,eva-firmware";
+				label = "firmware";
+				reg = <0x2090000 0x1f70000>;
+			};
+		};
+	};
+};
+
+/*
+ * Gigabit Ethernet: externer Atheros AR8033 an SGMII.
+ *
+ * Diese Werte sind NICHT geraten - es ist die Konfiguration, mit der
+ * neorob85 auf genau diesem Geraet OpenWrt gebootet und LuCI erreicht hat
+ * (OpenWrt-Forum Thread 248477, Post 1).
+ *
+ * Bewusst NICHT dabei: "qca956x-serdes-fixup" und der "gmac-config"-Knoten.
+ * Der SGMII-Mux wird von ag71xx_probe() ohnehin unbedingt gesetzt
+ * (ag71xx_mux_select_sgmii_qca956x() bei compatible qca,qca9560-eth mit
+ * phy-mode sgmii). Der Fixup ueberschreibt darueber hinaus die
+ * SerDes-Widerstandskalibrierung mit einem blinden Default, reprogrammiert
+ * die SGMII-PLL und loest RESET_SGMII neu - er kann also die Strecke
+ * zerstoeren, die EVA funktionsfaehig hinterlassen hat. Keines der drei
+ * upstream gemergten QCN5502-Boards setzt ihn.
+ *
+ * Der PHY hat feste Adresse UND feste PHY-ID: damit braucht der Kernel
+ * keinen MDIO-Autoscan und muss die Kennung nicht vom Bus lesen, bevor
+ * die reset-gpios greifen.
+ */
+&mdio0 {
+	status = "okay";
+
+	phy0: ethernet-phy@0 {
+		compatible = "ethernet-phy-id004d.d074";	/* AR8033 */
+		reg = <0>;
+		reset-gpios = <&gpio 20 GPIO_ACTIVE_LOW>;
+		reset-assert-us = <20000>;
+		reset-deassert-us = <20000>;
+		qca,clk-out-frequency = <125000000>;
+		qca,smarteee-tw-us-1g = <24>;
+	};
+};
+
+&eth0 {
+	status = "okay";
+
+	phy-handle = <&phy0>;
+	phy-mode = "sgmii";
+
+	pll-data = <0x03000000 0x00000101 0x00001919>;
+};
+
+/*
+ * 2,4 GHz: QCN5502-WMAC, direkt im SoC - kein PCIe beteiligt.
+ *
+ * compatible: "qca,qcn5502-wifi" ist der of_match-Eintrag aus
+ * package/kernel/mac80211/patches/ath9k/005-wifi-ath9k-add-QCN550x-device-IDs.patch
+ * (ahb.c). Er zeigt auf AR9300_DEVID_QCN550X = 0x0040, und
+ * ath9k_hw_read_revisions() macht daraus direkt
+ * macVersion = AR_SREV_VERSION_5502 (0x700), ohne ein Register zu lesen.
+ *
+ * Der Compatible ist NICHT kosmetisch - er bestimmt die gelesene
+ * EEPROM-Groesse. Ohne ihn erbt der Knoten "qca,qca9560-wifi" aus
+ * qca956x.dtsi, AR_SREV_5502() bleibt false, und
+ * ath9k_hw_ar9300_fill_eeprom() nutzt
+ * mdata_size = sizeof(struct ar9300_eeprom) = 0x440 statt
+ * sizeof(struct qcn5502_eeprom) = 0x540. Das bricht NICHT ab - der Blob
+ * ist gross genug - sondern interpretiert alles ab baseEepHeader falsch:
+ * stiller Fehlbetrieb ohne eine einzige Fehlermeldung.
+ *
+ * qca,no-eeprom laesst ath9k_of_init() die Firmwaredatei
+ * ath9k-eeprom-ahb-18100000.wmac.bin anfordern ("ahb" aus
+ * ath_bus_type_strings[ATH_AHB], "18100000.wmac" aus
+ * reg = <0x18100000 0x10000> in qca956x.dtsi) und loescht AH_USE_EEPROM,
+ * sodass ar9300_eeprom_restore_flash() den Blob ab Offset 0 uebernimmt.
+ * Erzeugt wird die Datei von hotplug.d/firmware/10-ath9k-eeprom aus
+ * urlader-Cal-Entry 0x0207.
+ *
+ * Eine nvmem-Zelle ist nicht moeglich, ohne vorher einen rohen
+ * 0x540-Block ins Werksflash zu schreiben: im Flash liegt der Blob nur
+ * zlib-komprimiert UND byteverkehrt, nirgends roh - 0 Treffer fuer die
+ * MAC-Bytes und fuer "02 10 60 b5 8d" im gesamten 64-MiB-Dump.
+ *
+ * Bewusst NICHT dabei:
+ *  - nvmem-cells / mac-address: der extrahierte Blob traegt macwlan
+ *    60:b5:8d:b1:87:1e schon bei Offset 0x02.
+ *  - ein "led"-Kindknoten: die Front-WLAN-LED haengt am 74HC595
+ *    (gpio-leds mit phy0tpt). ath_fill_led_pin() faellt auf
+ *    ATH_LED_PIN_DEF = 1 zurueck, das wird mit
+ *    341-wifi-ath9k-obtain-system-gpios.patch ueber
+ *    gpiod_get_index(dev, "ath9k", 1) aufgeloest und scheitert hier mit
+ *    -ENOENT, weil der Knoten keine ath9k-gpios-Property hat. SoC-GPIO 1
+ *    (connect-Taster) wird also nicht angefasst - im dmesg pruefen.
+ *
+ * Merke: der 5-GHz-Teil des Blobs ist nicht genullt, sondern mit
+ * Template-Geruest gefuellt (nur calPierData5G@0x24b ist ganz 0). "die
+ * 5G-Sektion ist leer" ist also KEIN brauchbarer Sanity-Check;
+ * 2,4-GHz-only folgt allein aus opFlags = 0x02.
+ */
+&wmac {
+	compatible = "qca,qcn5502-wifi";
+	status = "okay";
+
+	qca,no-eeprom;
+};

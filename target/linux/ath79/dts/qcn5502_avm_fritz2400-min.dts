@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/*
+ * Minimalvariante zur Eingrenzung.
+ *
+ * Enthaelt bewusst NICHTS von den Erweiterungen dieses Ports:
+ * kein spi-gpio, kein 74HC595, keine gpio-leds, kein i2c-gpio, kein LM75,
+ * keine Taster, kein PCIe, kein ath9k, kein ath10k.
+ *
+ * Uebrig bleiben SoC, SPI-Flash mit Partitionstabelle und Ethernet. Damit
+ * ist die Frage beantwortbar, ob der Kernel auf diesem Geraet ueberhaupt
+ * durchlaeuft - alle Treiber, die ueber Deferred Probing laufen (spi-gpio ->
+ * 74HC595 -> gpio-leds, i2c-gpio -> lm75), sind hier nicht dabei und koennen
+ * den Boot nicht aufhalten.
+ *
+ * Weil keine gpio-leds definiert sind, bleiben die LEDs in dem Zustand, den
+ * EVA hinterlassen hat. Das einzige Signal ist also das Netzwerk:
+ * antwortet 192.168.1.1, liegt der Fehler in einer meiner Erweiterungen;
+ * antwortet es nicht, sitzt er im Grundport (Ethernet oder SoC-Anbindung).
+ */
+
+#include "qca956x.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	model = "AVM FRITZ!Repeater 2400";
+	compatible = "avm,fritz2400", "qca,qcn5500", "qca,qca9560";
+
+	aliases {
+		label-mac-device = &eth0;
+	};
+};
+
+&uart {
+	status = "okay";
+};
+
+&spi {
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "urlader";
+				reg = <0x000000 0x020000>;
+				read-only;
+			};
+
+			partition@20000 {
+				label = "tffs (1)";
+				reg = <0x020000 0x070000>;
+				read-only;
+			};
+
+			partition@90000 {
+				label = "reserved-kernel";
+				reg = <0x090000 0x1f70000>;
+				read-only;
+			};
+
+			partition@2000000 {
+				label = "caldata";
+				reg = <0x2000000 0x020000>;
+				read-only;
+			};
+
+			partition@2020000 {
+				label = "tffs (2)";
+				reg = <0x2020000 0x070000>;
+				read-only;
+			};
+
+			partition@2090000 {
+				compatible = "avm,eva-firmware";
+				label = "firmware";
+				reg = <0x2090000 0x1f70000>;
+			};
+		};
+	};
+};
+
+&mdio0 {
+	status = "okay";
+
+	phy0: ethernet-phy@0 {
+		compatible = "ethernet-phy-id004d.d074";	/* AR8033 */
+		reg = <0>;
+		reset-gpios = <&gpio 20 GPIO_ACTIVE_LOW>;
+		reset-assert-us = <20000>;
+		reset-deassert-us = <20000>;
+	};
+};
+
+&eth0 {
+	status = "okay";
+
+	phy-handle = <&phy0>;
+	phy-mode = "sgmii";
+
+	pll-data = <0x03000000 0x00000101 0x00001919>;
+
+};

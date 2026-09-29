@@ -9,6 +9,48 @@ board=$(board_name)
 case "$FIRMWARE" in
 "ath9k-eeprom-ahb-18100000.wmac.bin")
 	case $board in
+	avm,fritz2400)
+		# QCN5502-WMAC-EEPROM: AVM-Cal-Entry 0x0207 in der urlader-
+		# Partition, zlib-komprimiert und vollstaendig byteverkehrt.
+		# Nach dem Umkehren stehen 4 Fuellbytes vorweg (-i 4), die
+		# Nutzlast ist sizeof(struct qcn5502_eeprom) = 0x540 - NICHT
+		# die 0x440 von struct ar9300_eeprom:
+		# ar9300_eeprom_restore_flash() liest bei AR_SREV_5502
+		# mdata_size/2 = 672 u16-Worte, bei 0x440 bricht
+		# ath9k_hw_nvram_read_array() bei Offset 544 mit -EIO ab.
+		#
+		# -r ist nur korrekt, weil die entpackte Groesse UNGERADE ist
+		# (4097 Byte): buffer_reverse(buf, datasize - 1) laesst bei
+		# gerader Laenge zwei Bytes in der Mitte ungetauscht.
+		#
+		# Das Alignment ist feldweise verifiziert - jede Verschiebung
+		# von -i um ein Byte zerstoert alles davon gleichzeitig:
+		#   0x000 eepromVersion 0x02, templateVersion 0x10
+		#   0x002 macAddr       60:b5:8d:b1:87:1e (= EVA macwlan)
+		#   0x008 custData      "R2400_V5_jet_2g"
+		#   0x01c regDmn        {0x0000,0x001f}, 0x020 txrxMask 0xff
+		#   0x021 opFlags       0x02 = nur 11G (kein 11A)
+		#   0x099 calFreqPier2G 70 89 ac -> 2412/2437/2472 MHz
+		#   0x0e4 freqbin_Cck   70 ac    -> 2412/2472 MHz
+		#   0x16f ctlIndex_2G   11 12 15 17 41 42 45 47 31 32 35 37
+		# Die MAC steht schon drin - kein ath9k_patch_mac, und im DTS
+		# keine nvmem-cells/mac-address am &wmac.
+		#
+		# rm -f in jedem Fehlerpfad ist zwingend, weil -o die Datei
+		# bereits im getopt-Block anlegt und Zeile 3 dieses Skripts
+		# eine 0-Byte-Leiche sonst dauerhaft als Erfolg wertet.
+		dev=$(find_mtd_chardev "urlader")
+		[ -n "$dev" ] || caldata_die "no urlader mtd partition"
+		/usr/bin/fritz_cal_extract -r -i 4 -s 0x980 -e 0x207 -l 0x540 \
+			-o /lib/firmware/$FIRMWARE "$dev" || {
+			rm -f /lib/firmware/$FIRMWARE
+			caldata_die "failed to extract ath9k eeprom from urlader"
+		}
+		caldata_valid "0210" || {
+			rm -f /lib/firmware/$FIRMWARE
+			caldata_die "ath9k eeprom from urlader has bad magic"
+		}
+		;;
 	avm,fritz1750e|\
 	avm,fritz4020|\
 	avm,fritz450e|\

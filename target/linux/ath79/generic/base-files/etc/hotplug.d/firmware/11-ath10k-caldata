@@ -9,6 +9,43 @@ board=$(board_name)
 case "$FIRMWARE" in
 "ath10k/pre-cal-pci-0000:00:00.0.bin")
 	case $board in
+	avm,fritz2400)
+		# QCA9984-Pre-Cal: AVM-Cal-Entry 0x0208 in der urlader-
+		# Partition, zlib-komprimiert, ein 0xff-Fuellbyte vorweg
+		# (-i 1), Nutzlast 0x2f20 = 12064 Byte. Der Blob deklariert
+		# diese Laenge in Byte 1..2 selbst (little endian), und 12064
+		# ist ath10k hw_params.cal_data_len fuer QCA9984.
+		#
+		# Die Cal-Kette beginnt bei 0x980, direkt hinter dem EVA-
+		# Environment-Block (0x806..0x97b, dann 9f 00 01 a0). Entries
+		# sind [be16 id][be16 len][payload] ohne Padding, id 0xffff
+		# terminiert (hier bei 0x2051). Ein anderer Startwert
+		# desynchronisiert den Lauf: mit -s 0x0 werden Bootloader-
+		# Bytes als Header gelesen.
+		#
+		# Genau EINE ID, keine Schleife: 0x212 gibt es auf diesem
+		# Geraet nicht (das ist der Repeater 3000), und 0x0207 ist das
+		# 2,4-GHz-EEPROM - dafuer liefert fritz_cal_extract einen
+		# SCHEINERFOLG (rc=0, 4096 Byte, Magic 5aa5, weil bei
+		# gesetztem -l auf datasize-skip geclampt wird), und ath10k
+		# prueft die Laenge nicht nach.
+		#
+		# rm -f in jedem Fehlerpfad ist zwingend: -o legt die Datei
+		# schon im getopt-Block an, also vor der Suche, und Zeile 3
+		# dieses Skripts wuerde eine 0-Byte-Leiche dauerhaft als
+		# Erfolg werten.
+		dev=$(find_mtd_chardev "urlader")
+		[ -n "$dev" ] || caldata_die "no urlader mtd partition"
+		/usr/bin/fritz_cal_extract -i 1 -s 0x980 -e 0x208 -l 12064 \
+			-o /lib/firmware/$FIRMWARE "$dev" || {
+			rm -f /lib/firmware/$FIRMWARE
+			caldata_die "failed to extract ath10k pre-cal from urlader"
+		}
+		caldata_valid "202f" || {
+			rm -f /lib/firmware/$FIRMWARE
+			caldata_die "ath10k pre-cal from urlader has bad magic"
+		}
+		;;
 	dlink,dir-842-c1|\
 	dlink,dir-842-c2|\
 	dlink,dir-842-c3)

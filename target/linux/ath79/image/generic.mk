@@ -571,6 +571,55 @@ define Device/avm_fritz1750e
 endef
 TARGET_DEVICES += avm_fritz1750e
 
+define Device/avm_fritz2400-common
+  $(Device/avm)
+  SOC := qcn5502
+  DEVICE_MODEL := FRITZ!Repeater 2400
+  IMAGE_SIZE := 32192k
+  # fritz-caldata liefert /usr/bin/fritz_cal_extract; ohne das Paket
+  # scheitern beide Caldata-Hotplug-Handler mit "not found", und die
+  # Pre-Cal fuer 5 GHz sowie das 2,4-GHz-EEPROM entstehen nie.
+  DEVICE_PACKAGES += kmod-hwmon-lm75 rssileds io fritz-caldata -swconfig
+endef
+
+define Device/avm_fritz2400
+  $(Device/avm_fritz2400-common)
+  # 5 GHz: QCA9984 hinter dem PCIe-Root-Complex. Ohne kmod-ath10k-ct
+  # bindet sich kein Treiber an die Karte, selbst wenn der Link steht;
+  # ath10k-board-qca9984 allein ist nur board-2.bin.
+  # Die Pre-Cal erzeugt 11-ath10k-caldata aus urlader-Entry 0x0208.
+  DEVICE_PACKAGES += kmod-ath10k-ct ath10k-firmware-qca9984-ct
+endef
+TARGET_DEVICES += avm_fritz2400
+
+define Device/avm_fritz2400-nopcie
+  $(Device/avm_fritz2400-common)
+  DEVICE_VARIANT := no PCIe
+  SUPPORTED_DEVICES += avm,fritz2400
+endef
+TARGET_DEVICES += avm_fritz2400-nopcie
+
+define Device/avm_fritz2400-min
+  $(Device/avm)
+  SOC := qcn5502
+  DEVICE_MODEL := FRITZ!Repeater 2400
+  DEVICE_VARIANT := diag minimal
+  IMAGE_SIZE := 32192k
+  # Diese Variante inkludiert die dtsi nicht, hat also weder WMAC noch
+  # PCIe. ath9k+ath9k_hw+ath9k_common+ath+mac80211+cfg80211 liegen dort
+  # als 1.640.960 Byte ohne gebundenes Geraet im RAM-Budget.
+  DEVICE_PACKAGES += io fritz-caldata -kmod-ath9k -kmod-ath9k-common -swconfig
+  SUPPORTED_DEVICES += avm,fritz2400
+endef
+TARGET_DEVICES += avm_fritz2400-min
+
+define Device/avm_fritz2400-heartbeat
+  $(Device/avm_fritz2400-common)
+  DEVICE_VARIANT := diag heartbeat
+  SUPPORTED_DEVICES += avm,fritz2400
+endef
+TARGET_DEVICES += avm_fritz2400-heartbeat
+
 define Device/avm_fritz300e
   $(Device/avm)
   SOC := ar7242
